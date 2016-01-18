@@ -48,102 +48,105 @@ public class WebSocket extends Transport {
     protected void doOpen() {
         Map<String, List<String>> headers = new TreeMap<String, List<String>>(String.CASE_INSENSITIVE_ORDER);
         this.emit(EVENT_REQUEST_HEADERS, headers);
+        try {
+        	final WebSocket self = this;
+        	final OkHttpClient client = new OkHttpClient();
 
-        final WebSocket self = this;
-        final OkHttpClient client = new OkHttpClient();
+        	// turn off timeouts (github.com/socketio/engine.io-client-java/issues/32)
+        	client.setConnectTimeout(0, TimeUnit.MILLISECONDS);
+        	client.setReadTimeout(0, TimeUnit.MILLISECONDS);
+        	client.setWriteTimeout(0, TimeUnit.MILLISECONDS);
 
-        // turn off timeouts (github.com/socketio/engine.io-client-java/issues/32)
-        client.setConnectTimeout(0, TimeUnit.MILLISECONDS);
-        client.setReadTimeout(0, TimeUnit.MILLISECONDS);
-        client.setWriteTimeout(0, TimeUnit.MILLISECONDS);
+        	if (this.sslContext != null) {
+        		SSLSocketFactory factory = sslContext.getSocketFactory();// (SSLSocketFactory) SSLSocketFactory.getDefault();
+        		client.setSslSocketFactory(factory);
+        	}
+        	if (this.hostnameVerifier != null) {
+        		client.setHostnameVerifier(this.hostnameVerifier);
+        	}
+        	Request.Builder builder = new Request.Builder().url(uri());
+        	for (Map.Entry<String, List<String>> entry : headers.entrySet()) {
+        		for (String v : entry.getValue()) {
+        			builder.addHeader(entry.getKey(), v);
+        		}
+        	}
+        	final Request request = builder.build();
+        	wsCall = WebSocketCall.create(client, request);
+        	wsCall.enqueue(new WebSocketListener() {
+        		@Override
+        		public void onOpen(com.squareup.okhttp.ws.WebSocket webSocket, Response response) {
+        			ws = webSocket;
+        			final Map<String, List<String>> headers = response.headers().toMultimap();
+        			EventThread.exec(new Runnable() {
+        				@Override
+        				public void run() {
+        					self.emit(EVENT_RESPONSE_HEADERS, headers);
+        					self.onOpen();
+        				}
+        			});
+        		}
 
-        if (this.sslContext != null) {
-            SSLSocketFactory factory = sslContext.getSocketFactory();// (SSLSocketFactory) SSLSocketFactory.getDefault();
-            client.setSslSocketFactory(factory);
+        		@Override
+        		public void onMessage(final ResponseBody responseBody) throws IOException {
+        			Object data = null;
+        			if (responseBody.contentType() == TEXT) {
+        				data = responseBody.string();
+        			} else if (responseBody.contentType() == BINARY) {
+        				data = responseBody.source().readByteArray();
+        			} else {
+        				EventThread.exec(new Runnable() {
+        					@Override
+        					public void run() {
+        						self.onError("Unknown payload type: " + responseBody.contentType(), new IllegalStateException());
+        					}
+        				});
+        			}
+        			responseBody.source().close();
+        			final Object finalData = data;
+        			EventThread.exec(new Runnable() {
+        				@Override
+        				public void run() {
+        					if (finalData == null) {
+        						return;
+        					}
+        					if (finalData instanceof String) {
+        						self.onData((String) finalData);
+        					} else {
+        						self.onData((byte[]) finalData);
+        					}
+        				}
+        			});
+
+        		}
+
+        		@Override
+        		public void onPong(Buffer payload) {
+        		}
+
+        		@Override
+        		public void onClose(int code, String reason) {
+        			EventThread.exec(new Runnable() {
+        				@Override
+        				public void run() {
+        					self.onClose();
+        				}
+        			});
+        		}
+
+        		@Override
+        		public void onFailure(final IOException e, final Response response) {
+        			EventThread.exec(new Runnable() {
+        				@Override
+        				public void run() {
+        					self.onError("websocket error", e);
+        				}
+        			});
+        		}
+        	});
+        	client.getDispatcher().getExecutorService().shutdown();
+        } catch (Exception e) {
+
         }
-        if (this.hostnameVerifier != null) {
-            client.setHostnameVerifier(this.hostnameVerifier);
-        }
-        Request.Builder builder = new Request.Builder().url(uri());
-        for (Map.Entry<String, List<String>> entry : headers.entrySet()) {
-            for (String v : entry.getValue()) {
-                builder.addHeader(entry.getKey(), v);
-            }
-        }
-        final Request request = builder.build();
-        wsCall = WebSocketCall.create(client, request);
-        wsCall.enqueue(new WebSocketListener() {
-            @Override
-            public void onOpen(com.squareup.okhttp.ws.WebSocket webSocket, Response response) {
-                ws = webSocket;
-                final Map<String, List<String>> headers = response.headers().toMultimap();
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        self.emit(EVENT_RESPONSE_HEADERS, headers);
-                        self.onOpen();
-                    }
-                });
-            }
-
-            @Override
-            public void onMessage(final ResponseBody responseBody) throws IOException {
-                Object data = null;
-                if (responseBody.contentType() == TEXT) {
-                    data = responseBody.string();
-                } else if (responseBody.contentType() == BINARY) {
-                    data = responseBody.source().readByteArray();
-                } else {
-                    EventThread.exec(new Runnable() {
-                        @Override
-                        public void run() {
-                            self.onError("Unknown payload type: " + responseBody.contentType(), new IllegalStateException());
-                        }
-                    });
-                }
-                responseBody.source().close();
-                final Object finalData = data;
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (finalData == null) {
-                            return;
-                        }
-                        if (finalData instanceof String) {
-                            self.onData((String) finalData);
-                        } else {
-                            self.onData((byte[]) finalData);
-                        }
-                    }
-                });
-
-            }
-
-            @Override
-            public void onPong(Buffer payload) {
-            }
-
-            @Override
-            public void onClose(int code, String reason) {
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        self.onClose();
-                    }
-                });
-            }
-
-            @Override
-            public void onFailure(final IOException e, final Response response) {
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        self.onError("websocket error", e);
-                    }
-                });
-            }
-        });
-        client.getDispatcher().getExecutorService().shutdown();
     }
 
     protected void write(Packet[] packets) throws UTF8Exception {
@@ -159,7 +162,7 @@ public class WebSocket extends Transport {
                         } else if (packet instanceof byte[]) {
                             self.ws.sendMessage(RequestBody.create(BINARY, (byte[]) packet));
                         }
-                    } catch (IOException e) {
+                    } catch (Exception e) {
                         logger.fine("websocket closed before onclose event");
                     }
                 }
@@ -195,6 +198,8 @@ public class WebSocket extends Transport {
                 // websocket already closed
             } catch (IllegalStateException e) {
                 // websocket already closed
+            } catch (Exception e) {
+            	onError("websocket error", e);
             }
         }
     }

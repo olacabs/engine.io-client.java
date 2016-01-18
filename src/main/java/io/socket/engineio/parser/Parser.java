@@ -200,61 +200,65 @@ public class Parser {
     }
 
     public static void decodePayload(byte[] data, DecodePayloadCallback callback) {
-        ByteBuffer bufferTail = ByteBuffer.wrap(data);
-        List<Object> buffers = new ArrayList<Object>();
+    	try {
+    		ByteBuffer bufferTail = ByteBuffer.wrap(data);
+    		List<Object> buffers = new ArrayList<Object>();
 
-        while (bufferTail.capacity() > 0) {
-            StringBuilder strLen = new StringBuilder();
-            boolean isString = (bufferTail.get(0) & 0xFF) == 0;
-            boolean numberTooLong = false;
-            for (int i = 1; ; i++) {
-                int b = bufferTail.get(i) & 0xFF;
-                if (b == 255) break;
-                // supports only integer
-                if (strLen.length() > MAX_INT_CHAR_LENGTH) {
-                    numberTooLong = true;
-                    break;
-                }
-                strLen.append(b);
-            }
-            if (numberTooLong) {
-                @SuppressWarnings("unchecked")
-                DecodePayloadCallback<String> _callback = callback;
-                _callback.call(err, 0, 1);
-                return;
-            }
-            bufferTail.position(strLen.length() + 1);
-            bufferTail = bufferTail.slice();
+    		while (bufferTail.capacity() > 0) {
+    			StringBuilder strLen = new StringBuilder();
+    			boolean isString = (bufferTail.get(0) & 0xFF) == 0;
+    			boolean numberTooLong = false;
+    			for (int i = 1; ; i++) {
+    				int b = bufferTail.get(i) & 0xFF;
+    				if (b == 255) break;
+    				// supports only integer
+    				if (strLen.length() > MAX_INT_CHAR_LENGTH) {
+    					numberTooLong = true;
+    					break;
+    				}
+    				strLen.append(b);
+    			}
+    			if (numberTooLong) {
+    				@SuppressWarnings("unchecked")
+    				DecodePayloadCallback<String> _callback = callback;
+    				_callback.call(err, 0, 1);
+    				return;
+    			}
+    			bufferTail.position(strLen.length() + 1);
+    			bufferTail = bufferTail.slice();
 
-            int msgLength = Integer.parseInt(strLen.toString());
+    			int msgLength = Integer.parseInt(strLen.toString());
 
-            bufferTail.position(1);
-            bufferTail.limit(msgLength + 1);
-            byte[] msg = new byte[bufferTail.remaining()];
-            bufferTail.get(msg);
-            if (isString) {
-                buffers.add(byteArrayToString(msg));
-            } else {
-                buffers.add(msg);
-            }
-            bufferTail.clear();
-            bufferTail.position(msgLength + 1);
-            bufferTail = bufferTail.slice();
-        }
+    			bufferTail.position(1);
+    			bufferTail.limit(msgLength + 1);
+    			byte[] msg = new byte[bufferTail.remaining()];
+    			bufferTail.get(msg);
+    			if (isString) {
+    				buffers.add(byteArrayToString(msg));
+    			} else {
+    				buffers.add(msg);
+    			}
+    			bufferTail.clear();
+    			bufferTail.position(msgLength + 1);
+    			bufferTail = bufferTail.slice();
+    		}
 
-        int total = buffers.size();
-        for (int i = 0; i < total; i++) {
-            Object buffer = buffers.get(i);
-            if (buffer instanceof String) {
-                @SuppressWarnings("unchecked")
-                DecodePayloadCallback<String> _callback = callback;
-                _callback.call(decodePacket((String)buffer, true), i, total);
-            } else if (buffer instanceof byte[]) {
-                @SuppressWarnings("unchecked")
-                DecodePayloadCallback<byte[]> _callback = callback;
-                _callback.call(decodePacket((byte[])buffer), i, total);
-            }
-        }
+    		int total = buffers.size();
+    		for (int i = 0; i < total; i++) {
+    			Object buffer = buffers.get(i);
+    			if (buffer instanceof String) {
+    				@SuppressWarnings("unchecked")
+    				DecodePayloadCallback<String> _callback = callback;
+    				_callback.call(decodePacket((String)buffer, true), i, total);
+    			} else if (buffer instanceof byte[]) {
+    				@SuppressWarnings("unchecked")
+    				DecodePayloadCallback<byte[]> _callback = callback;
+    				_callback.call(decodePacket((byte[])buffer), i, total);
+    			}
+    		}
+    	} catch (Exception e) {
+
+    	}
     }
 
     private static String byteArrayToString(byte[] bytes) {

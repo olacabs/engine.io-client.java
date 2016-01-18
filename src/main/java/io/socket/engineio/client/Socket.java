@@ -323,55 +323,61 @@ public class Socket extends Emitter {
         final Runnable[] cleanup = new Runnable[1];
 
         final Listener onTransportOpen = new Listener() {
-            @Override
-            public void call(Object... args) {
-                if (failed[0]) return;
+        	@Override
+        	public void call(Object... args) {
+        		if (failed[0]) return;
 
-                logger.fine(String.format("probe transport '%s' opened", name));
-                Packet<String> packet = new Packet<String>(Packet.PING, "probe");
-                transport[0].send(new Packet[] {packet});
-                transport[0].once(Transport.EVENT_PACKET, new Listener() {
-                    @Override
-                    public void call(Object... args) {
-                        if (failed[0]) return;
+        		try {
+        			logger.fine(String.format("probe transport '%s' opened", name));
+        			Packet<String> packet = new Packet<String>(Packet.PING, "probe");
+        			transport[0].send(new Packet[] {packet});
+        			transport[0].once(Transport.EVENT_PACKET, new Listener() {
+        				@Override
+        				public void call(Object... args) {
+        					if (failed[0]) return;
 
-                        Packet msg = (Packet)args[0];
-                        if (Packet.PONG.equals(msg.type) && "probe".equals(msg.data)) {
-                            logger.fine(String.format("probe transport '%s' pong", name));
-                            self.upgrading = true;
-                            self.emit(EVENT_UPGRADING, transport[0]);
-                            if (null == transport[0]) return;
-                            Socket.priorWebsocketSuccess = WebSocket.NAME.equals(transport[0].name);
+        					try {
+        						Packet msg = (Packet)args[0];
+        						if (Packet.PONG.equals(msg.type) && "probe".equals(msg.data)) {
+        							logger.fine(String.format("probe transport '%s' pong", name));
+        							self.upgrading = true;
+        							self.emit(EVENT_UPGRADING, transport[0]);
+        							if (null == transport[0]) return;
+        							Socket.priorWebsocketSuccess = WebSocket.NAME.equals(transport[0].name);
 
-                            logger.fine(String.format("pausing current transport '%s'", self.transport.name));
-                            ((Polling)self.transport).pause(new Runnable() {
-                                @Override
-                                public void run() {
-                                    if (failed[0]) return;
-                                    if (ReadyState.CLOSED == self.readyState) return;
+        							logger.fine(String.format("pausing current transport '%s'", self.transport.name));
+        							((Polling)self.transport).pause(new Runnable() {
+        								@Override
+        								public void run() {
+        									if (failed[0]) return;
+        									if (ReadyState.CLOSED == self.readyState) return;
 
-                                    logger.fine("changing transport and sending upgrade packet");
+        									logger.fine("changing transport and sending upgrade packet");
 
-                                    cleanup[0].run();
+        									cleanup[0].run();
 
-                                    self.setTransport(transport[0]);
-                                    Packet packet = new Packet(Packet.UPGRADE);
-                                    transport[0].send(new Packet[]{packet});
-                                    self.emit(EVENT_UPGRADE, transport[0]);
-                                    transport[0] = null;
-                                    self.upgrading = false;
-                                    self.flush();
-                                }
-                            });
-                        } else {
-                            logger.fine(String.format("probe transport '%s' failed", name));
-                            EngineIOException err = new EngineIOException("probe error");
-                            err.transport = transport[0].name;
-                            self.emit(EVENT_UPGRADE_ERROR, err);
-                        }
-                    }
-                });
-            }
+        									self.setTransport(transport[0]);
+        									Packet packet = new Packet(Packet.UPGRADE);
+        									transport[0].send(new Packet[]{packet});
+        									self.emit(EVENT_UPGRADE, transport[0]);
+        									transport[0] = null;
+        									self.upgrading = false;
+        									self.flush();
+        								}
+        							});
+        						} else {
+        							logger.fine(String.format("probe transport '%s' failed", name));
+        							EngineIOException err = new EngineIOException("probe error");
+        							err.transport = transport[0].name;
+        							self.emit(EVENT_UPGRADE_ERROR, err);
+        						}
+        					} catch (Exception e) {
+        					}
+        				}
+        			});
+        		} catch (Exception e) {
+        		}
+        	}
         };
 
         final Listener freezeTransport = new Listener() {
@@ -477,25 +483,28 @@ public class Socket extends Emitter {
     private void onPacket(Packet packet) {
         if (this.readyState == ReadyState.OPENING || this.readyState == ReadyState.OPEN) {
             logger.fine(String.format("socket received: type '%s', data '%s'", packet.type, packet.data));
+            try {
+            	this.emit(EVENT_PACKET, packet);
+            	this.emit(EVENT_HEARTBEAT);
 
-            this.emit(EVENT_PACKET, packet);
-            this.emit(EVENT_HEARTBEAT);
+            	if (Packet.OPEN.equals(packet.type)) {
+            		try {
+            			this.onHandshake(new HandshakeData((String)packet.data));
+            		} catch (JSONException e) {
+            			this.emit(EVENT_ERROR, new EngineIOException(e));
+            		}
+            	} else if (Packet.PONG.equals(packet.type)) {
+            		this.setPing();
+            	} else if (Packet.ERROR.equals(packet.type)) {
+            		EngineIOException err = new EngineIOException("server error");
+            		err.code = packet.data;
+            		this.emit(EVENT_ERROR, err);
+            	} else if (Packet.MESSAGE.equals(packet.type)) {
+            		this.emit(EVENT_DATA, packet.data);
+            		this.emit(EVENT_MESSAGE, packet.data);
+            	}
+            } catch (Exception e) {
 
-            if (Packet.OPEN.equals(packet.type)) {
-                try {
-                    this.onHandshake(new HandshakeData((String)packet.data));
-                } catch (JSONException e) {
-                    this.emit(EVENT_ERROR, new EngineIOException(e));
-                }
-            } else if (Packet.PONG.equals(packet.type)) {
-                this.setPing();
-            } else if (Packet.ERROR.equals(packet.type)) {
-                EngineIOException err = new EngineIOException("server error");
-                err.code = packet.data;
-                this.emit(EVENT_ERROR, err);
-            } else if (Packet.MESSAGE.equals(packet.type)) {
-                this.emit(EVENT_DATA, packet.data);
-                this.emit(EVENT_MESSAGE, packet.data);
             }
         } else {
             logger.fine(String.format("packet received with socket readyState '%s'", this.readyState));
@@ -772,48 +781,53 @@ public class Socket extends Emitter {
     }
 
     private void onClose(String reason, Exception desc) {
-        if (ReadyState.OPENING == this.readyState || ReadyState.OPEN == this.readyState || ReadyState.CLOSING == this.readyState) {
-            logger.fine(String.format("socket close with reason: %s", reason));
-            final Socket self = this;
+    	if (ReadyState.OPENING == this.readyState || ReadyState.OPEN == this.readyState || ReadyState.CLOSING == this.readyState) {
+    		logger.fine(String.format("socket close with reason: %s", reason));
 
-            // clear timers
-            if (this.pingIntervalTimer != null) {
-                this.pingIntervalTimer.cancel(false);
-            }
-            if (this.pingTimeoutTimer != null) {
-                this.pingTimeoutTimer.cancel(false);
-            }
-            if (this.heartbeatScheduler != null) {
-                this.heartbeatScheduler.shutdown();
-            }
+    		try {
+    			final Socket self = this;
 
-            EventThread.nextTick(new Runnable() {
-                @Override
-                public void run() {
-                    self.writeBuffer.clear();
-                    self.callbackBuffer.clear();
-                    self.prevBufferLen = 0;
-                }
-            });
+    			// clear timers
+    			if (this.pingIntervalTimer != null) {
+    				this.pingIntervalTimer.cancel(false);
+    			}
+    			if (this.pingTimeoutTimer != null) {
+    				this.pingTimeoutTimer.cancel(false);
+    			}
+    			if (this.heartbeatScheduler != null) {
+    				this.heartbeatScheduler.shutdown();
+    			}
 
-            // stop event from firing again for transport
-            this.transport.off(EVENT_CLOSE);
+    			EventThread.nextTick(new Runnable() {
+    				@Override
+    				public void run() {
+    					self.writeBuffer.clear();
+    					self.callbackBuffer.clear();
+    					self.prevBufferLen = 0;
+    				}
+    			});
 
-            // ensure transport won't stay open
-            this.transport.close();
+    			// stop event from firing again for transport
+    			this.transport.off(EVENT_CLOSE);
 
-            // ignore further transport communication
-            this.transport.off();
+    					// ensure transport won't stay open
+    			this.transport.close();
 
-            // set ready state
-            this.readyState = ReadyState.CLOSED;
+    			// ignore further transport communication
+    			this.transport.off();
 
-            // clear session id
-            this.id = null;
+    			// set ready state
+    			this.readyState = ReadyState.CLOSED;
 
-            // emit close events
-            this.emit(EVENT_CLOSE, reason, desc);
-        }
+    			// clear session id
+    			this.id = null;
+
+    			// emit close events
+    			this.emit(EVENT_CLOSE, reason, desc);
+    		} catch (Exception e) {
+    		
+    		}
+    	}
     }
 
     /*package*/ List<String > filterUpgrades(List<String> upgrades) {
